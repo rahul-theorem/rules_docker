@@ -39,7 +39,8 @@ load(
     "//container:layer_tools.bzl",
     _assemble_image = "assemble",
     _gen_img_args = "generate_args_for_image",
-    _get_layers = "get_from_target",
+    _get_layers_from_archive_file = "get_from_archive_file",
+    _get_layers_from_target = "get_from_target",
     _incr_load = "incremental_load",
     _layer_tools = "tools",
 )
@@ -56,20 +57,6 @@ load(
     _join_path = "join",
 )
 
-def _get_base_config(ctx, name, base):
-    if ctx.files.base or base:
-        # The base is the first layer in container_parts if provided.
-        layer = _get_layers(ctx, name, ctx.attr.base, base)
-        return layer.get("config")
-    return None
-
-def _get_base_manifest(ctx, name, base):
-    if ctx.files.base or base:
-        # The base is the first layer in container_parts if provided.
-        layer = _get_layers(ctx, name, ctx.attr.base, base)
-        return layer.get("manifest")
-    return None
-
 def _add_create_image_config_args(
         ctx,
         args,
@@ -84,6 +71,7 @@ def _add_create_image_config_args(
         creation_time,
         env,
         workdir,
+        user,
         layer_names,
         base_config,
         base_manifest,
@@ -125,8 +113,8 @@ def _add_create_image_config_args(
             ctx.expand_make_variables("env", value, {}),
         ]))
 
-    if ctx.attr.user:
-        args.add("-user", ctx.attr.user)
+    if user:
+        args.add("-user", user)
     if workdir:
         args.add("-workdir", workdir)
 
@@ -182,6 +170,7 @@ def _image_config(
         os_version = None,
         layer_name = None,
         workdir = None,
+        user = None,
         null_entrypoint = False,
         null_cmd = False):
     """Create the configuration for a new container image."""
@@ -219,6 +208,7 @@ def _image_config(
         creation_time,
         env,
         workdir,
+        user,
         layer_names,
         base_config,
         base_manifest,
@@ -296,6 +286,7 @@ def _impl(
         output_digest = None,
         output_layer = None,
         workdir = None,
+        user = None,
         null_cmd = None,
         null_entrypoint = None):
     """Implementation for the container_image rule.
@@ -352,10 +343,12 @@ def _impl(
         output_digest: File, overrides ctx.outputs.digest
         output_layer: File, overrides ctx.outputs.layer
         workdir: str, overrides ctx.attr.workdir
+        user: str, overrides ctx.attr.user
         null_cmd: bool, overrides ctx.attr.null_cmd
         null_entrypoint: bool, overrides ctx.attr.null_entrypoint
     """
     name = name or ctx.label.name
+    base = base or ctx.attr.base
     entrypoint = entrypoint or ctx.attr.entrypoint
     cmd = cmd or ctx.attr.cmd
     architecture = architecture or ctx.attr.architecture
@@ -421,7 +414,10 @@ def _impl(
     # Get the layers and shas from our base.
     # These are ordered as they'd appear in the v2.2 config,
     # so they grow at the end.
-    parent_parts = _get_layers(ctx, name, ctx.attr.base, base)
+    if hasattr(base, "basename"):
+        parent_parts = _get_layers_from_archive_file(ctx, name, base)
+    else:
+        parent_parts = _get_layers_from_target(ctx, name, base)
     zipped_layers = parent_parts.get("zipped_layer", []) + [layer.zipped_layer for layer in layers]
     shas = parent_parts.get("blobsum", []) + [layer.blob_sum for layer in layers]
     unzipped_layers = parent_parts.get("unzipped_layer", []) + [layer.unzipped_layer for layer in layers]
@@ -434,11 +430,11 @@ def _impl(
     transitive_files = depset(new_files + new_emptyfiles + new_symlinks, transitive = [parent_transitive_files])
 
     # Get the config for the base layer
-    config_file = _get_base_config(ctx, name, base)
+    config_file = parent_parts.get("config")
     config_digest = None
 
     # Get the manifest for the base layer
-    manifest_file = _get_base_manifest(ctx, name, base)
+    manifest_file = parent_parts.get("manifest")
     manifest_digest = None
 
     # Generate the new config layer by layer, using the attributes specified and the diff_id
@@ -458,6 +454,7 @@ def _impl(
             os_version = os_version,
             layer_name = str(i),
             workdir = workdir or ctx.attr.workdir,
+            user = user or ctx.attr.user,
             null_entrypoint = null_entrypoint,
             null_cmd = null_cmd,
         )
@@ -770,7 +767,15 @@ _outputs["config_digest"] = "%{name}.json.sha256"
 _outputs["build_script"] = "%{name}.executable"
 
 def _image_transition_impl(settings, attr):
-    return dicts.add(settings, {
+    if not settings["@io_bazel_rules_docker//transitions:enable"]:
+        # Once bazel < 5.0 is not supported we can return an empty dict here
+        return {
+            "//command_line_option:platforms": settings["//command_line_option:platforms"],
+            "@io_bazel_rules_docker//platforms:image_transition_cpu": "//plaftorms:image_transition_cpu_unset",
+            "@io_bazel_rules_docker//platforms:image_transition_os": "//plaftorms:image_transition_os_unset",
+        }
+
+    return {
         "//command_line_option:platforms": "@io_bazel_rules_docker//platforms:image_transition",
         "@io_bazel_rules_docker//platforms:image_transition_cpu": "@platforms//cpu:" + {
             # Architecture aliases.
@@ -779,11 +784,14 @@ def _image_transition_impl(settings, attr):
             "ppc64le": "ppc",
         }.get(attr.architecture, attr.architecture),
         "@io_bazel_rules_docker//platforms:image_transition_os": "@platforms//os:" + attr.operating_system,
-    })
+    }
 
 _image_transition = transition(
     implementation = _image_transition_impl,
-    inputs = [],
+    inputs = [
+        "@io_bazel_rules_docker//transitions:enable",
+        "//command_line_option:platforms",
+    ],
     outputs = [
         "//command_line_option:platforms",
         "@io_bazel_rules_docker//platforms:image_transition_cpu",

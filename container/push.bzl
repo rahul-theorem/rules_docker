@@ -79,7 +79,7 @@ def _impl(ctx):
     if tarball:
         print("Pushing an image based on a tarball can be very " +
               "expensive. If the image set on %s is the output of a " % ctx.label +
-              "container_build, consider dropping the '.tar' extension. " +
+              "docker_build, consider dropping the '.tar' extension. " +
               "If the image is checked in, consider using " +
               "container_import instead.")
 
@@ -134,8 +134,6 @@ def _impl(ctx):
         PushInfo(
             registry = registry,
             repository = repository,
-            tag = tag,
-            stamp_inputs = stamp_inputs,
             digest = ctx.outputs.digest,
         ),
     ]
@@ -172,7 +170,10 @@ container_push_ = rule(
         ),
         "skip_unchanged_digest": attr.bool(
             default = False,
-            doc = "Only push images if the digest has changed, default to False",
+            doc = "Check if the container registry already contain the image's digest. If yes, skip the push for that image. " +
+                  "Default to False. " +
+                  "Note that there is no transactional guarantee between checking for digest existence and pushing the digest. " +
+                  "This means that you should try to avoid running the same container_push targets in parallel.",
         ),
         "stamp": STAMP_ATTR,
         "tag": attr.string(

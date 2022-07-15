@@ -1,4 +1,4 @@
-# Copyright 2017 The Bazel Authors. All rights reserved.
+# Copyright 2022 The Bazel Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,14 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 
-package(default_visibility = ["//visibility:public"])
+package(
+    default_visibility = ["//visibility:public"],
+)
 
-licenses(["notice"])  # Apache 2.0
+bool_flag(
+    name = "enable",
+    build_setting_default = True,
+)
 
-bzl_library(
-    name = "oci_bzl",
-    srcs = ["oci.bzl"],
-    visibility = ["//visibility:private"],
+config_setting(
+    name = "enabled",
+    flag_values = {"@io_bazel_rules_docker//transitions:enable": "true"},
+)
+
+config_setting(
+    name = "disabled",
+    flag_values = {"@io_bazel_rules_docker//transitions:enable": "false"},
 )

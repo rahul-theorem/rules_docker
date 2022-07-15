@@ -30,6 +30,7 @@ load("//contrib:test.bzl", "container_test")
 load(":apple.bzl", "create_banana_directory")
 load(":empty_layers.bzl", "empty_layers")
 load(":pull_info_validation_test.bzl", "pull_info_validation_test")
+load(":transitions.bzl", "templated_file", "transition_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -239,7 +240,7 @@ container_push(
 # BEGIN_DO_NOT_IMPORT
 file_test(
     name = "test_digest_output1",
-    content = "sha256:4ec78686f1edd4f30cca6222f17ace5a2b9f8db9708727c3a140c954af0a534d",
+    content = "sha256:7d1a06dae0021fb7a0bb789d414ec3799a397141d7299dce5ba287627737eaea",
     file = ":deb_image_with_dpkgs.digest",
 )
 
@@ -615,13 +616,13 @@ file_test(
 
 file_test(
     name = "alpine_custom_attr_digest_test",
-    content = "sha256:2f3bf2d061a1bab130cdd98f10b73dfceb08bfbf94a610c62f20c787073e5178",
+    content = "sha256:63a40621b30af05f51fb2b38c2b5c56f9cc82cc605d556e09cacdbbdc5adec63",
     file = ":new_push_test_legacy_from_container_img.digest",
 )
 
 file_test(
     name = "new_alpine_linux_armv6_image_tar_digest_test",
-    content = "sha256:249804db68a05bb88cc353d4aff090b084d8b8312665638d2f8d7bdaeaa423b3",
+    content = "sha256:8876a15fad80a30d9ec8660a09c0b795513febc64084047e394a5b534a596ecd",
     file = ":new_alpine_linux_armv6_image_tar.digest",
 )
 
@@ -998,4 +999,81 @@ container_bundle(
         "localhost:5000/image3:latest": "//testdata:with_label",
         "localhost:5000/image4:latest": "//testdata:with_double_label",
     },
+)
+
+genrule(
+    name = "got_os",
+    outs = ["got_os.txt"],
+    cmd = select({
+        "@platforms//os:windows": "echo windows > \"$@\"",
+        "@platforms//os:linux": "echo linux > \"$@\"",
+        "@platforms//os:macos": "echo macos > \"$@\"",
+    }),
+)
+
+genrule(
+    name = "got_arch",
+    outs = ["got_arch.txt"],
+    cmd = select({
+        "@platforms//cpu:arm64": "echo arm64 > \"$@\"",
+        "@platforms//cpu:aarch64": "echo arm64 > \"$@\"",
+        "@platforms//cpu:x86_64": "echo x86_64 > \"$@\"",
+        "@platforms//cpu:arm": "echo arm > \"$@\"",
+    }),
+)
+
+container_image(
+    name = "transitioned_image",
+    architecture = "arm64",
+    files = [
+        ":got_arch",
+        ":got_os",
+    ],
+    operating_system = "windows",
+)
+
+templated_file(
+    name = "transitions_off",
+    out = "transitions_off.yaml",
+    substitutions =
+        select({
+            "@platforms//os:linux": ["%WANT_OS%=linux"],
+            "@platforms//os:macos": ["%WANT_OS%=macos"],
+        }) + select({
+            "@platforms//cpu:arm64": ["%WANT_ARCH%=arm64"],
+            "@platforms//cpu:aarch64": ["%WANT_ARCH%=arm64"],
+            "@platforms//cpu:x86_64": ["%WANT_ARCH%=x86_64"],
+        }),
+    template = "//tests/container/configs:transitions_off.yaml.tpl",
+)
+
+container_test(
+    name = "_transitions_on_test_base",
+    configs = ["//tests/container/configs:transitions_on.yaml"],
+    driver = "tar",
+    image = ":transitioned_image",
+    # marked manual, because it will only pass if transitions are enabled
+    # enabled or disabled
+    tags = ["manual"],
+)
+
+transition_test(
+    name = "transitions_on_test",
+    actual = ":_transitions_on_test_base",
+    transitions_enabled = True,
+)
+
+container_test(
+    name = "_transitions_off_test_base",
+    configs = ["transitions_off"],
+    driver = "tar",
+    image = ":transitioned_image",
+    # marked manual, because it will only pass if transitions are disabled
+    tags = ["manual"],
+)
+
+transition_test(
+    name = "transitions_off_test",
+    actual = ":_transitions_off_test_base",
+    transitions_enabled = False,
 )

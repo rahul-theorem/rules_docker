@@ -133,7 +133,7 @@ docker_toolchain_configure(
   # OPTIONAL: Path to a directory which has a custom docker client config.json.
   # See https://docs.docker.com/engine/reference/commandline/cli/#configuration-files
   # for more details.
-  client_config="<enter absolute path to your docker config directory here>",
+  client_config="<enter Bazel label to your docker config.json here>",
   # OPTIONAL: Path to the docker binary.
   # Should be set explicitly for remote execution.
   docker_path="<enter absolute path to the docker binary (in the remote exec env) here>",
@@ -208,6 +208,12 @@ like:
 Unable to load package for //:WORKSPACE: BUILD file not found in any of the following directories.
 ```
 
+* rules_docker uses transitions to build your containers using toolchains the correct
+architecture and operating system. If you run into issues with toolchain resolutions,
+you can disable this behaviour, by adding this to your .bazelrc:
+```
+build --@io_bazel_rules_docker//transitions:enable=false
+```
 ## Using with Docker locally.
 
 Suppose you have a `container_image` target `//my/image:helloworld`:
@@ -239,16 +245,22 @@ performs the following steps:
 You can suppress this behavior by passing the single flag: `bazel run :foo -- --norun`
 
 Alternatively, you can build a `docker load` compatible bundle with:
-`bazel build my/image:helloworld.tar`.  This will produce the file:
-`bazel-bin/my/image/helloworld.tar`, which you can load into
-your local Docker client by running:
-`docker load -i bazel-bin/my/image/helloworld.tar`.  Building
-this target can be expensive for large images.
+`bazel build my/image:helloworld.tar`.  This will produce a tar file
+in your `bazel-out` directory that can be loaded into your local Docker
+client. Building this target can be expensive for large images. You will
+first need to query the ouput file location.
+
+```bash
+TARBALL_LOCATION=$(bazel cquery my/image:helloworld.tar \
+    --output starlark \
+    --starlark:expr="target.files.to_list()[0].path")
+docker load -i $TARBALL_LOCATION
+```
 
 These work with both `container_image`, `container_bundle`, and the
-`lang_image` rules.  For everything except
-`container_bundle`, the image name will be `bazel/my/image:helloworld`.
-For `container_bundle`, it will apply the tags you have specified.
+`lang_image` rules.  For everything except `container_bundle`, the image
+name will be `bazel/my/image:helloworld`. The `container_bundle` rule will
+apply the tags you have specified.
 
 ## Authentication
 
@@ -635,7 +647,7 @@ nodejs_image(
     name = "nodejs_image",
     entry_point = "@your_workspace//path/to:file.js",
     # npm deps will be put into their own layer
-    data = [":file.js", "@npm//some-npm-dep"],    
+    data = [":file.js", "@npm//some-npm-dep"],
     ...
 )
 ```
@@ -1150,13 +1162,12 @@ load("@io_bazel_rules_docker//toolchains/docker:toolchain.bzl",
 
 docker_toolchain_configure(
   name = "docker_config",
-  # Replace this with an absolute path to a directory which has a custom docker
-  # client config.json. Note relative paths are not supported.
-  # Docker allows you to specify custom authentication credentials
+  # Replace this with a Bazel label to the config.json file. Note absolute or relative
+  # paths are not supported. Docker allows you to specify custom authentication credentials
   # in the client configuration JSON file.
   # See https://docs.docker.com/engine/reference/commandline/cli/#configuration-files
   # for more details.
-  client_config="/path/to/docker/client/config-dir",
+  client_config="@//path/to/docker:client.json",
 )
 ```
 In `BUILD` file:
@@ -1250,9 +1261,9 @@ load("@io_bazel_rules_docker//toolchains/docker:toolchain.bzl",
 # Configure the docker toolchain.
 docker_toolchain_configure(
   name = "docker_config",
-  # Path to the directory which has a custom docker client config.json with
+  # Bazel label to a custom docker client config.json with
   # authentication credentials for registry.gitlab.com (used in this example).
-  client_config="/path/to/docker/client/config",
+  client_config="@//path/to/docker/client:config.json",
 )
 
 # Load the custom version of container_pull created by the docker toolchain
